@@ -1,0 +1,83 @@
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+
+# Initialize simulator
+simulator = AerSimulator()
+
+# ---------------- Quantum Random Number Generator ----------------
+def qrng(n):
+    bits = ""
+    for _ in range(n):
+        qc = QuantumCircuit(1, 1)
+        qc.h(0)              # Superposition
+        qc.measure(0, 0)     # Measurement
+        tqc = transpile(qc, simulator)
+        result = simulator.run(tqc, shots=1).result()
+        bits += list(result.get_counts().keys())[0]
+    return bits
+
+# Convert bits to bases
+# 0 -> Z basis, 1 -> X basis
+def bits_to_bases(bits):
+    return ['Z' if b == '0' else 'X' for b in bits]
+
+# ---------------- Alice prepares qubits ----------------
+def alice_prepare(bits, bases):
+    qubits = []
+    for bit, base in zip(bits, bases):
+        qc = QuantumCircuit(1, 1)
+        if bit == '1':
+            qc.x(0)
+        if base == 'X':
+            qc.h(0)
+        qubits.append(qc)
+    return qubits
+
+# ---------------- Bob measures qubits ----------------
+def bob_measure(qubits, bases):
+    results = []
+    for qc, base in zip(qubits, bases):
+        if base == 'X':
+            qc.h(0)
+        qc.measure(0, 0)
+        tqc = transpile(qc, simulator)
+        result = simulator.run(tqc, shots=1).result()
+        results.append(list(result.get_counts().keys())[0])
+    return results
+
+# ---------------- BB84 Protocol ----------------
+n = 32  # Number of qubits sent
+
+# Alice
+alice_bits = qrng(n)
+alice_bases = bits_to_bases(qrng(n))
+
+# Bob
+bob_bases = bits_to_bases(qrng(n))
+
+# Quantum channel
+qubits = alice_prepare(alice_bits, alice_bases)
+bob_results = bob_measure(qubits, bob_bases)
+
+# ---------------- Key Sifting & QBER ----------------
+shared_key = []
+errors = 0
+total = 0
+
+for i in range(n):
+    if alice_bases[i] == bob_bases[i]:
+        total += 1
+        if alice_bits[i] != bob_results[i]:
+            errors += 1
+        else:
+            shared_key.append(bob_results[i])
+
+qber = (errors / total) * 100 if total > 0 else 0
+
+# ---------------- Output ----------------
+print("Alice Bits      :", alice_bits)
+print("Alice Bases     :", alice_bases)
+print("Bob Bases       :", bob_bases)
+print("Bob Results     :", bob_results)
+print("Shared Key      :", "".join(shared_key))
+print(f"Quantum Bit Error Rate (QBER): {qber:.2f}%")
