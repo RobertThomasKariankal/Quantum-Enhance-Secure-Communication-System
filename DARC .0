@@ -1,0 +1,107 @@
+import socket
+import threading
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+
+# ---------------- Quantum Setup ----------------
+simulator = AerSimulator()
+
+def qrng(n):
+    bits = ""
+    for _ in range(n):
+        qc = QuantumCircuit(1, 1)
+        qc.h(0)
+        qc.measure(0, 0)
+        tqc = transpile(qc, simulator)
+        result = simulator.run(tqc, shots=1).result()
+        bits += list(result.get_counts().keys())[0]
+    return bits
+
+def bits_to_bases(bits):
+    return ['Z' if b == '0' else 'X' for b in bits]
+
+def prepare_qubits(bits, bases):
+    qubits = []
+    for bit, base in zip(bits, bases):
+        qc = QuantumCircuit(1, 1)
+        if bit == '1':
+            qc.x(0)
+        if base == 'X':
+            qc.h(0)
+        qubits.append(qc)
+    return qubits
+
+def measure_qubits(qubits, bases):
+    results = []
+    for qc, base in zip(qubits, bases):
+        if base == 'X':
+            qc.h(0)
+        qc.measure(0, 0)
+        tqc = transpile(qc, simulator)
+        result = simulator.run(tqc, shots=1).result()
+        results.append(list(result.get_counts().keys())[0])
+    return results
+
+# ---------------- Networking ----------------
+def start_server(port, buffer):
+    s = socket.socket()
+    s.bind(("", port))
+    s.listen(1)
+    conn, _ = s.accept()
+    data = conn.recv(4096).decode()
+    buffer.append(data)
+    conn.close()
+
+def send_data(ip, port, msg):
+    s = socket.socket()
+    s.connect((ip, port))
+    s.send(msg.encode())
+    s.close()
+
+# ---------------- BB84 Node ----------------
+N = 32
+my_bits = qrng(N)
+my_bases = bits_to_bases(qrng(N))
+
+qubits = prepare_qubits(my_bits, my_bases)
+
+recv_buffer = []
+threading.Thread(target=start_server, args=(5000, recv_buffer)).start()
+
+peer_ip = input("Enter peer IP: ")
+send_data(peer_ip, 5000, "".join(my_bases))
+
+while not recv_buffer:
+    pass
+
+peer_bases = list(recv_buffer[0])
+
+my_results = measure_qubits(qubits, peer_bases)
+
+send_data(peer_ip, 5001, "".join(my_results))
+
+recv_buffer.clear()
+threading.Thread(target=start_server, args=(5001, recv_buffer)).start()
+
+while not recv_buffer:
+    pass
+
+peer_results = recv_buffer[0]
+
+# ---------------- Key Sifting ----------------
+shared_key = []
+errors = 0
+total = 0
+
+for i in range(N):
+    if my_bases[i] == peer_bases[i]:
+        total += 1
+        if my_bits[i] != peer_results[i]:
+            errors += 1
+        else:
+            shared_key.append(my_bits[i])
+
+qber = (errors / total) * 100 if total else 0
+
+print("\nShared Key:", "".join(shared_key))
+print(f"QBER: {qber:.2f}%")
